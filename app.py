@@ -251,7 +251,7 @@ with tab_dodaj:
                 })
                 updated_lager = pd.concat([df_lager, new_row], ignore_index=True)
                 
-                save_data(updated_lager, updated_arhiva)
+                save_data(updated_lager, df_arhiva)
                 st.cache_data.clear()
                 st.success("Uspješno dodano na lager!")
                 st.rerun()
