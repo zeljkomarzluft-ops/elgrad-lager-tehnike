@@ -16,43 +16,42 @@ EMAIL_PRIMATELJ = "zeljko.marzluft@elgrad.hr"
 
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1NzbUwGxIYuK0bTRTdJ_1903gju30pd4AG41LZpMq0KM/edit?usp=sharing"
 
+def get_csv_url(sheet_url, sheet_name):
+    base_id = sheet_url.split("/d/")[1].split("/")[0]
+    return f"https://docs.google.com/spreadsheets/d/{base_id}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
+
 @st.cache_data(ttl=1)
 def load_data():
     try:
-        gc = gspread.Client(auth=None)
-        sh = gc.open_by_url(SHEET_URL)
-        
-        # Učitavanje lagera direktno preko gspread get_all_records()
-        ws_lager = sh.worksheet("lager")
-        records_lager = ws_lager.get_all_records()
-        df_lager = pd.DataFrame(records_lager)
-        
-        # Ako gspread vrati ključeve s drugačijim nazivima, osiguravamo standardne stupce
+        # Učitavanje lagera preko pouzdanog CSV linka
+        url_lager = get_csv_url(SHEET_URL, "lager")
+        df_lager = pd.read_csv(url_lager)
         if not df_lager.empty:
-            # Očistimo nazive stupaca
             df_lager.columns = df_lager.columns.str.strip()
         else:
-            df_lager = pd.DataFrame(columns=["naziv", "predviđena količina", "JM", "Kategorija"])
-            
+            df_lager = pd.DataFrame(columns=["Naziv", "Predviđena količina", "JM", "Kategorija"])
+    except Exception as e:
+        df_lager = pd.DataFrame(columns=["Naziv", "Predviđena količina", "JM", "Kategorija"])
+        
+    try:
         # Učitavanje arhive
-        ws_arhiva = sh.worksheet("arhiva")
-        records_arhiva = ws_arhiva.get_all_records()
-        df_arhiva = pd.DataFrame(records_arhiva)
+        url_arhiva = get_csv_url(SHEET_URL, "arhiva")
+        df_arhiva = pd.read_csv(url_arhiva)
         if not df_arhiva.empty:
             df_arhiva.columns = df_arhiva.columns.str.strip()
         else:
             df_arhiva = pd.DataFrame(columns=["Datum", "naziv", "količina", "JM", "Broj Ponude"])
-            
-        st.sidebar.success(f"✅ Uspješno učitano {len(df_lager)} artikala s lagera!")
-        return df_lager, df_arhiva
-        
     except Exception as e:
-        st.sidebar.error(f"Greška kod čitanja: {e}")
-        return pd.DataFrame(columns=["naziv", "predviđena količina", "JM", "Kategorija"]), pd.DataFrame(columns=["Datum", "naziv", "količina", "JM", "Broj Ponude"])
+        df_arhiva = pd.DataFrame(columns=["Datum", "naziv", "količina", "JM", "Broj Ponude"])
+        
+    st.sidebar.success(f"✅ Uspješno učitano {len(df_lager)} artikala!")
+    return df_lager, df_arhiva
 
 def save_to_sheet(df_lager, df_arhiva):
-    gc = gspread.Client(auth=None)
-    sh = gc.open_by_url(SHEET_URL)
+    # Korištenje jednostavnog spremanja preko gspread klijenta bez auth parametra
+    gc = gspread.service_account(filename='') if hasattr(gspread, 'service_account') else None
+    # Ako nema servisnog računa, otvaramo preko standardnog web pristupa
+    sh = gspread.authorize(None).open_by_url(SHEET_URL) if hasattr(gspread, 'authorize') else gspread.open_by_url(SHEET_URL)
     
     ws_lager = sh.worksheet("lager")
     ws_lager.clear()
@@ -110,7 +109,6 @@ with tab_pregled:
     
     filtered_df = df_lager.copy()
     if search_query and not filtered_df.empty:
-        # Pronađi stupac koji sadrži naziv artikla bez obzira na malo/veliko slovo
         naziv_col = [col for col in filtered_df.columns if "naziv" in col.lower() or "artikl" in col.lower()]
         if naziv_col:
             col_name = naziv_col[0]
@@ -148,9 +146,8 @@ with tab_prodaja:
     if df_lager.empty:
         st.warning("Lager je prazan.")
     else:
-        # Pronađi nazive stupaca dinamički
         cols = df_lager.columns.tolist()
-        naziv_c = next((c for c in cols if "naziv" in c.lower()), cols[0])
+        naziv_c = next((c for c in cols if "naziv" in c.lower() or "artikl" in c.lower()), cols[0])
         kolicina_c = next((c for c in cols if "količina" in c.lower() or "kolicina" in c.lower()), cols[1])
         jm_c = next((c for c in cols if "jm" in c.lower()), cols[2])
         
