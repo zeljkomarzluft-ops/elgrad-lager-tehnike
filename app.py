@@ -150,15 +150,14 @@ df_lager, df_arhiva = load_data()
 
 st.title("📦 Sustav za praćenje slobodnog lagera - Elgrad Pula")
 
-tab_pregled, tab_dodaj, tab_prodaja, tab_arhiva = st.tabs([
-    "📋 Pregled Lagera", 
+tab_pregled, tab_dodaj, tab_arhiva = st.tabs([
+    "📋 Pregled i Prodaja Lagera", 
     "➕ Dodaj Artikal (Admin)", 
-    "❌ Evidencija Prodaje (Trgovci)", 
     "📊 Arhiva Prodaje"
 ])
 
 with tab_pregled:
-    st.header("Slobodno na lageru")
+    st.header("Slobodno na lageru i prodaja")
     search_query = st.text_input("🔍 Pretraži po nazivu ili šifri:", "", key="search_pregled")
     
     filtered_df = df_lager.copy()
@@ -167,8 +166,68 @@ with tab_pregled:
         filtered_df = filtered_df[
             filtered_df[naziv_col].astype(str).str.contains(search_query, case=False, na=False)
         ]
-    st.dataframe(filtered_df, use_container_width=True)
-    st.sidebar.success(f"✅ Učitano artikala: {len(df_lager)}")
+    
+    # Dodajemo stupac za odabir u tablicu
+    filtered_df.insert(0, "Prodaj", False)
+    
+    edited_df = st.data_editor(
+        filtered_df, 
+        use_container_width=True, 
+        hide_index=True,
+        column_config={"Prodaj": st.column_config.CheckboxColumn("Odaberi za prodaju", required=True)}
+    )
+    
+    # Pronađi koji je artikal označen kvačicom
+    odabrani_redci = edited_df[edited_df["Prodaj"] == True]
+    
+    if not odabrani_redci.empty:
+        st.markdown("---")
+        st.subheader("🛒 Dovršetak prodaje za odabrani artikal")
+        
+        cols = df_lager.columns.tolist()
+        naziv_c = cols[0]
+        kolicina_c = cols[1] if len(cols) > 1 else cols[0]
+        jm_c = cols[2] if len(cols) > 2 else cols[0]
+        
+        puni_naziv = odabrani_redci.iloc[0][naziv_c]
+        originalni_red = df_lager[df_lager[naziv_c].astype(str) == str(puni_naziv)].iloc[0]
+        trenutna_kolicina = float(originalni_red[kolicina_c])
+        jm_artikla = str(originalni_red[jm_c])
+        
+        st.info(Odabran artikal: **{puni_naziv}** (Dostupno: {trenutna_kolicina} {jm_artikla}))
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            kolicina_za_maknuti = st.number_input(f"Količina za skinuti ({jm_artikla}):", min_value=0.5, max_value=max(0.5, trenutna_kolicina), value=1.0, step=1.0)
+        with col2:
+            broj_ponude = st.text_input("📝 Broj ponude / računa (Obavezno):", key="input_ponuda_pregled")
+            
+        if st.button("🚀 Proknjiži prodaju", type="primary"):
+            if not broj_ponude.strip():
+                st.error("Greška: Unesi broj ponude prije knjiženja!")
+            else:
+                if kolicina_za_maknuti >= trenutna_kolicina:
+                    updated_lager = df_lager[df_lager[naziv_c].astype(str) != str(puni_naziv)]
+                else:
+                    df_lager.loc[df_lager[naziv_c].astype(str) == str(puni_naziv), kolicina_c] = trenutna_kolicina - kolicina_za_maknuti
+                    updated_lager = df_lager
+                
+                vrijeme_sada = datetime.now().strftime("%Y-%m-%d %H:%M")
+                nova_stavka_arhiva = pd.DataFrame({
+                    "Datum": [vrijeme_sada],
+                    "naziv": [puni_naziv],
+                    "količina": [kolicina_za_maknuti],
+                    "JM": [jm_artikla],
+                    "Broj Ponude": [broj_ponude]
+                })
+                updated_arhiva = pd.concat([df_arhiva, nova_stavka_arhiva], ignore_index=True)
+                
+                save_data(updated_lager, updated_arhiva)
+                posalji_email_obavijest(puni_naziv, kolicina_za_maknuti, jm_artikla, broj_ponude)
+                
+                st.cache_data.clear()
+                st.success(f"Uspješno proknjiženo za ponudu br. {broj_ponude}! Mail poslan.")
+                st.rerun()
 
 with tab_dodaj:
     st.header("Unos novog artikla")
@@ -182,68 +241,3 @@ with tab_dodaj:
             if not novi_naziv.strip():
                 st.error("Upiši naziv artikla!")
             else:
-                col_names = df_lager.columns.tolist() if not df_lager.empty else ["Naziv", "Predviđena količina", "JM", "Kategorija"]
-                new_row = pd.DataFrame([[novi_naziv, nova_kolicina, nova_jm, nova_kategorija]], columns=col_names[:4])
-                updated_lager = pd.concat([df_lager, new_row], ignore_index=True)
-                
-                save_data(updated_lager, df_arhiva)
-                st.cache_data.clear()
-                st.success("Uspješno dodano na lager!")
-                st.rerun()
-
-with tab_prodaja:
-    st.header("Evidencija prodaje i razduženje")
-    if df_lager.empty:
-        st.warning("Lager je trenutačno prazan.")
-    else:
-        cols = df_lager.columns.tolist()
-        naziv_c = cols[0]
-        kolicina_c = cols[1] if len(cols) > 1 else cols[0]
-        jm_c = cols[2] if len(cols) > 2 else cols[0]
-        
-        opcije_artikala = df_lager.apply(lambda row: f"{row[naziv_c]} (Dostupno: {row[kolicina_c]} {row[jm_c]})", axis=1).tolist()
-        odabrani_artikal = st.selectbox("Izaberi prodani artikal:", opcije_artikala)
-        
-        broj_ponude = st.text_input("📝 Unesi broj ponude / računa (Obavezno):", key="input_ponuda")
-        
-        if odabrani_artikal:
-            puni_naziv_iz_selecta = odabrani_artikal.split(" (Dostupno:")[0]
-            red_artikla = df_lager[df_lager[naziv_c].astype(str) == puni_naziv_iz_selecta].iloc[0]
-            trenutna_kolicina = float(red_artikla[kolicina_c])
-            jm_artikla = str(red_artikla[jm_c])
-            
-            kolicina_za_maknuti = st.number_input(f"Količina za maknuti ({jm_artikla}):", min_value=0.5, max_value=max(0.5, trenutna_kolicina), value=1.0, step=1.0)
-            
-            if st.button("💾 Proknjiži prodaju i pošalji obavijest", type="primary"):
-                if not broj_ponude.strip():
-                    st.error("Greška: Trgovac mora upisati broj ponude prije skidanja s lagera!")
-                else:
-                    if kolicina_za_maknuti >= trenutna_kolicina:
-                        updated_lager = df_lager[df_lager[naziv_c].astype(str) != puni_naziv_iz_selecta]
-                    else:
-                        df_lager.loc[df_lager[naziv_c].astype(str) == puni_naziv_iz_selecta, kolicina_c] = trenutna_kolicina - kolicina_za_maknuti
-                        updated_lager = df_lager
-                    
-                    vrijeme_sada = datetime.now().strftime("%Y-%m-%d %H:%M")
-                    nova_stavka_arhiva = pd.DataFrame({
-                        "Datum": [vrijeme_sada],
-                        "naziv": [puni_naziv_iz_selecta],
-                        "količina": [kolicina_za_maknuti],
-                        "JM": [jm_artikla],
-                        "Broj Ponude": [broj_ponude]
-                    })
-                    updated_arhiva = pd.concat([df_arhiva, nova_stavka_arhiva], ignore_index=True)
-                    
-                    save_data(updated_lager, updated_arhiva)
-                    posalji_email_obavijest(puni_naziv_iz_selecta, kolicina_za_maknuti, jm_artikla, broj_ponude)
-                    
-                    st.cache_data.clear()
-                    st.success(f"Uspješno prodano! Ponuda: {broj_ponude}. Mail poslan.")
-                    st.rerun()
-
-with tab_arhiva:
-    st.header("📊 Pregled prodane robe")
-    if df_arhiva.empty:
-        st.info("Još nema zabilježene prodaje.")
-    else:
-        st.dataframe(df_arhiva, use_container_width=True)
