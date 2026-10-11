@@ -23,7 +23,7 @@ def get_google_sheet():
         sheet_url = st.secrets["connections"]["gsheets"]["spreadsheet"]
     except:
         # Ako nema Secrets-a, ovdje možeš direktno zalijepiti URL svog Google Sheeta pod navodnike
-        sheet_url = "OVDJE_ZALIJEPI_LINK_SVOJ_GOOGLE_SHEETA"
+        sheet_url = "https://docs.google.com/spreadsheets/d/1NzbUwGxIYuK0bTRTdJ_l9O3gju3Opd4AG41LZpMq0KM/edit?gid=960391894#gid=960391894"
     
     gc = gspread.no_service_account()
     sh = gc.open_by_url(sheet_url)
