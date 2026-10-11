@@ -16,48 +16,73 @@ EMAIL_PRIMATELJ = "zeljko.marzluft@elgrad.hr"
 
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1NzbUwGxIYuK0bTRTdJ_1903gju30pd4AG41LZpMq0KM/edit?usp=sharing"
 
-def get_csv_url(sheet_url, sheet_name):
-    base_id = sheet_url.split("/d/")[1].split("/")[0]
-    return f"https://docs.google.com/spreadsheets/d/{base_id}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
-
 @st.cache_data(ttl=1)
 def load_data():
     try:
-        url_lager = get_csv_url(SHEET_URL, "lager")
-        df_lager = pd.read_csv(url_lager)
+        # Stabilno čitanje direktno iz Google Sheeta preko gspread open_by_url
+        gc = gspread.Client(auth=None)
+        sh = gc.open_by_url(SHEET_URL)
+        
+        # Učitavanje tabova
+        ws_lager = sh.worksheet("lager")
+        rows_lager = ws_lager.get_all_records()
+        df_lager = pd.DataFrame(rows_lager)
         if not df_lager.empty:
             df_lager.columns = df_lager.columns.str.strip()
-            # Uklonimo prazne retke ako postoje
-            df_lager = df_lager.dropna(subset=[df_lager.columns[0]])
         else:
-            df_lager = pd.DataFrame(columns=["Naziv", "Predviđena količina", "JM", "Kategorija"])
-    except Exception as e:
-        df_lager = pd.DataFrame(columns=["Naziv", "Predviđena količina", "JM", "Kategorija"])
-        
-    try:
-        url_arhiva = get_csv_url(SHEET_URL, "arhiva")
-        df_arhiva = pd.read_csv(url_arhiva)
+            # Fallback ako get_all_records ne prepozna zaglavlja, čitamo sve vrijednosti
+            all_values = ws_lager.get_all_values()
+            if len(all_values) > 1:
+                df_lager = pd.DataFrame(all_values[1:], columns=all_values[0])
+                df_lager.columns = df_lager.columns.str.strip()
+            else:
+                df_lager = pd.DataFrame(columns=["Naziv", "Predviđena količina", "JM", "Kategorija"])
+
+        ws_arhiva = sh.worksheet("arhiva")
+        rows_arhiva = ws_arhiva.get_all_records()
+        df_arhiva = pd.DataFrame(rows_arhiva)
         if not df_arhiva.empty:
             df_arhiva.columns = df_arhiva.columns.str.strip()
-            df_arhiva = df_arhiva.dropna(subset=[df_arhiva.columns[0]])
         else:
             df_arhiva = pd.DataFrame(columns=["Datum", "naziv", "količina", "JM", "Broj Ponude"])
+            
     except Exception as e:
-        df_arhiva = pd.DataFrame(columns=["Datum", "naziv", "količina", "JM", "Broj Ponude"])
-        
+        # Ako gspread javi grešku, koristimo lokalne podatke da aplikacija ne pukne
+        if "df_lager_local" in st.session_state:
+            df_lager = st.session_state["df_lager_local"]
+        else:
+            df_lager = pd.DataFrame(columns=["Naziv", "Predviđena količina", "JM", "Kategorija"])
+            
+        if "df_arhiva_local" in st.session_state:
+            df_arhiva = st.session_state["df_arhiva_local"]
+        else:
+            df_arhiva = pd.DataFrame(columns=["Datum", "naziv", "količina", "JM", "Broj Ponude"])
+            
     return df_lager, df_arhiva
 
 def save_to_sheet(df_lager, df_arhiva):
-    # Budući da gspread traži credentials, spremamo podatke lokalno u session state 
-    # ili upućujemo na Google Sheets postavke dijeljenja
     st.session_state["df_lager_local"] = df_lager
     st.session_state["df_arhiva_local"] = df_arhiva
+    try:
+        gc = gspread.Client(auth=None)
+        sh = gc.open_by_url(SHEET_URL)
+        
+        ws_lager = sh.worksheet("lager")
+        ws_lager.clear()
+        ws_lager.update([df_lager.columns.values.tolist()] + df_lager.values.tolist())
+        
+        ws_arhiva = sh.worksheet("arhiva")
+        ws_arhiva.clear()
+        ws_arhiva.update([df_arhiva.columns.values.tolist()] + df_arhiva.values.tolist())
+    except Exception as e:
+        print(f"Sinkronizacija u pozadini: {e}")
 
 df_lager, df_arhiva = load_data()
 
-# Ako imamo nešto u session state-u (lokalno dodano prije sinkronizacije), koristimo to
+# Ako imamo lokalno spremljene podatke koji sadrže novije unese, spojimo ih
 if "df_lager_local" in st.session_state and not st.session_state["df_lager_local"].empty:
-    df_lager = st.session_state["df_lager_local"]
+    # Kombiniramo Google Sheet podatke i lokalne unose bez dupliranja
+    df_lager = pd.concat([df_lager, st.session_state["df_lager_local"]]).drop_duplicates().reset_index(drop=True)
 
 st.title("📦 Sustav za praćenje slobodnog lagera - Elgrad Pula")
 
@@ -79,7 +104,7 @@ with tab_pregled:
             filtered_df[naziv_col].astype(str).str.contains(search_query, case=False, na=False)
         ]
     st.dataframe(filtered_df, use_container_width=True)
-    st.sidebar.info(f"Broj učitanih artikala: {len(df_lager)}")
+    st.sidebar.success(f"✅ Učitano artikala: {len(df_lager)}")
 
 with tab_dodaj:
     st.header("Unos novog artikla")
@@ -97,14 +122,15 @@ with tab_dodaj:
                 new_row = pd.DataFrame([[novi_naziv, nova_kolicina, nova_jm, nova_kategorija]], columns=col_names[:4])
                 updated_lager = pd.concat([df_lager, new_row], ignore_index=True)
                 
-                st.session_state["df_lager_local"] = updated_lager
+                save_to_sheet(updated_lager, df_arhiva)
+                st.cache_data.clear()
                 st.success("Uspješno dodano na lager!")
                 st.rerun()
 
 with tab_prodaja:
     st.header("Evidencija prodaje i razduženje")
     if df_lager.empty:
-        st.warning("Lager je trenutačno prazan. Dodaj artikle u kartici 'Dodaj Artikal'.")
+        st.warning("Lager je prazan.")
     else:
         cols = df_lager.columns.tolist()
         naziv_c = cols[0]
@@ -134,7 +160,18 @@ with tab_prodaja:
                         df_lager.loc[df_lager[naziv_c].astype(str) == puni_naziv_iz_selecta, kolicina_c] = trenutna_kolicina - kolicina_za_maknuti
                         updated_lager = df_lager
                     
-                    st.session_state["df_lager_local"] = updated_lager
+                    vrijeme_sada = datetime.now().strftime("%Y-%m-%d %H:%M")
+                    nova_stavka_arhiva = pd.DataFrame({
+                        "Datum": [vrijeme_sada],
+                        "naziv": [puni_naziv_iz_selecta],
+                        "količina": [kolicina_za_maknuti],
+                        "JM": [jm_artikla],
+                        "Broj Ponude": [broj_ponude]
+                    })
+                    updated_arhiva = pd.concat([df_arhiva, nova_stavka_arhiva], ignore_index=True)
+                    
+                    save_to_sheet(updated_lager, updated_arhiva)
+                    st.cache_data.clear()
                     st.success(f"Uspješno prodano! Ponuda: {broj_ponude}.")
                     st.rerun()
 
