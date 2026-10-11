@@ -14,7 +14,6 @@ SMTP_USER = "notifikacije@elgrad.hr"
 SMTP_PASS = "tvoja_lozinka" 
 EMAIL_PRIMATELJ = "zeljko.marzluft@elgrad.hr"
 
-# Link tvog Google Sheeta
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1NzbUwGxIYuK0bTRTdJ_1903gju30pd4AG41LZpMq0KM/edit?usp=sharing"
 
 def get_csv_url(sheet_url, sheet_name):
@@ -26,36 +25,30 @@ def load_data():
     try:
         url_lager = get_csv_url(SHEET_URL, "lager")
         df_lager = pd.read_csv(url_lager)
-        df_lager.columns = df_lager.columns.str.strip()
-        if df_lager.empty:
-            df_lager = pd.DataFrame(columns=["naziv", "predviđena količina", "JM", "Kategorija"])
+        
+        # Automatsko preimenovanje prva 4 stupca bez obzira kako se zovu u tablici
+        if len(df_lager.columns) >= 4:
+            df_lager.columns = ["naziv", "predviđena količina", "JM", "Kategorija"] + list(df_lager.columns[4:])
+        elif len(df_lager.columns) == 3:
+            df_lager["Kategorija"] = "Ostalo"
+            df_lager.columns = ["naziv", "predviđena količina", "JM", "Kategorija"]
+            
+        # Očistimo prazne redke
+        df_lager = df_lager.dropna(subset=["naziv"])
     except Exception as e:
         df_lager = pd.DataFrame(columns=["naziv", "predviđena količina", "JM", "Kategorija"])
         
     try:
         url_arhiva = get_csv_url(SHEET_URL, "arhiva")
         df_arhiva = pd.read_csv(url_arhiva)
-        df_arhiva.columns = df_arhiva.columns.str.strip()
-        if df_arhiva.empty:
-            df_arhiva = pd.DataFrame(columns=["Datum", "naziv", "količina", "JM", "Broj Ponude"])
+        if len(df_arhiva.columns) >= 5:
+            df_arhiva.columns = ["Datum", "naziv", "količina", "JM", "Broj Ponude"] + list(df_arhiva.columns[5:])
+        df_arhiva = df_arhiva.dropna(subset=["naziv"])
     except Exception as e:
         df_arhiva = pd.DataFrame(columns=["Datum", "naziv", "količina", "JM", "Broj Ponude"])
         
-    st.sidebar.success("✅ Podaci uspješno učitani s Google Sheeta!")
+    st.sidebar.success("✅ Uspješno učitani artikli s lagera!")
     return df_lager, df_arhiva
-
-def save_to_sheet(df_lager, df_arhiva):
-    # Za zapisivanje koristimo gspread s besplatnim pristupom preko URL-a
-    import urllib.request
-    # Najlakši upis preko gspread bez grešaka:
-    gc = gspread.oauth_from_dict({}) if hasattr(gspread, 'oauth_from_dict') else None
-    # Otvaranje preko gspread nanoklijenta ili webclienta ako je dostupno, 
-    # a za stabilnost koristimo direktno spremanje:
-    sh = gspread.authorize(None).open_by_url(SHEET_URL) if hasattr(gspread, 'authorize') else None
-    
-    # Ako gspread traži credentials, privremeno koristimo CSV API za čitanje, 
-    # a za upis ćemo koristiti gspread. open_by_url ako je tablica javna:
-    sh = gspread.Client(auth=None).open_by_url(SHEET_URL)
 
 def posalji_email_obavijest(naziv_artikla, kolicina, jm, broj_ponude):
     try:
@@ -130,11 +123,7 @@ with tab_dodaj:
                 })
                 updated_lager = pd.concat([df_lager, new_row], ignore_index=True)
                 
-                # Upis direktno preko gspread klijenta bez auth grešaka
-                try:
-                    gc = gspread.service_account(filename='')
-                except:
-                    gc = gspread.Client(auth=None)
+                gc = gspread.Client(auth=None)
                 sh = gc.open_by_url(SHEET_URL)
                 ws_lager = sh.worksheet("lager")
                 ws_lager.clear()
@@ -147,7 +136,7 @@ with tab_dodaj:
 with tab_prodaja:
     st.header("Evidencija prodaje i razduženje")
     if df_lager.empty:
-        st.warning("Lager je prazan ili se podaci učitavaju.")
+        st.warning("Lager je prazan.")
     else:
         opcije_artikala = df_lager.apply(lambda row: f"{row['naziv']} (Dostupno: {row['predviđena količina']} {row['JM']})", axis=1).tolist()
         odabrani_artikal = st.selectbox("Izaberi prodani artikal:", opcije_artikala)
@@ -182,12 +171,8 @@ with tab_prodaja:
                     })
                     updated_arhiva = pd.concat([df_arhiva, nova_stavka_arhiva], ignore_index=True)
                     
-                    # Spremanje lagera i arhive
-                    try:
-                        gc = gspread.Client(auth=None)
-                    except:
-                        pass
-                    sh = gspread.Client(auth=None).open_by_url(SHEET_URL)
+                    gc = gspread.Client(auth=None)
+                    sh = gc.open_by_url(SHEET_URL)
                     
                     ws_lager = sh.worksheet("lager")
                     ws_lager.clear()
