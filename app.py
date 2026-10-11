@@ -14,24 +14,41 @@ SMTP_USER = "notifikacije@elgrad.hr"
 SMTP_PASS = "tvoja_lozinka" 
 EMAIL_PRIMATELJ = "zeljko.marzluft@elgrad.hr"
 
-# Datoteke lokalno na Streamlit poslužitelju (trajno spremište na GitHubu)
 LAGER_FILE = "lager.csv"
 ARHIVA_FILE = "arhiva.csv"
 
+# Početni artikli iz vaše tablice da odmah budu tu
+POZNATI_ARTIKLI = [
+    {"Naziv": "[RO20516992] PIPA BLANCOVITIS-S NT 3 cijevi", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Pipe"},
+    {"Naziv": "[RO20517348] SUDOPER BLANCOMETRA 5 S TARTUFO sa dalj.uprav.", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Sudoperi"},
+    {"Naziv": "[RO20517722] PIPA BLANCODARAS Silgranit-look Alumetalic VT", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Pipe"},
+    {"Naziv": "[RO20517742] PIPA BLANCOMIDA KROM VT", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Pipe"},
+    {"Naziv": "[RO20519416] PIPA BLANCOMIDA VT alumetalic", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Pipe"},
+    {"Naziv": "[RO20519418] PIPA BLANCOMIDA SILGRANIT BIJELA", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Pipe"},
+    {"Naziv": "[RO20521468] BLANCO FLEXON II 45/2", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Tehnika"},
+    {"Naziv": "[RO20521473] Blanco Flexon II XL 60/3", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Tehnika"},
+    {"Naziv": "[RO20521840] SUDOPER BLANCO ETAGON 500-IF", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Sudoperi"},
+    {"Naziv": "[RO20523326] SUDOPER BLANCO LEGRA XL 6 S antracit bez prib. bez dalj.", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Sudoperi"},
+    {"Naziv": "[RO20524254] SUDOPER BLANCO DINAS XL 6 S, bez dalj. upr.", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Sudoperi"},
+    {"Naziv": "[RO20525110] Sudoper Blanco LEMIS XL S-IF compact sa dalj.", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Sudoperi"},
+    {"Naziv": "[RO20525198] PIPA BLANCO FONTAS-S II KROM VT", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Pipe"},
+    {"Naziv": "[RO20526019] BLANCO ZIA XL 6 S Compact SILGRANIT PuraDur CRNA, bez dalj. upr", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Sudoperi"}
+]
+
 @st.cache_data(ttl=1)
 def load_data():
-    # Učitavanje lagera
     if os.path.exists(LAGER_FILE):
         try:
             df_lager = pd.read_csv(LAGER_FILE)
             df_lager.columns = df_lager.columns.str.strip()
+            if df_lager.empty:
+                df_lager = pd.DataFrame(POZNATI_ARTIKLI)
         except:
-            df_lager = pd.DataFrame(columns=["Naziv", "Predviđena količina", "JM", "Kategorija"])
+            df_lager = pd.DataFrame(POZNATI_ARTIKLI)
     else:
-        # Početni primjeri ako datoteka ne postoji
-        df_lager = pd.DataFrame(columns=["Naziv", "Predviđena količina", "JM", "Kategorija"])
+        df_lager = pd.DataFrame(POZNATI_ARTIKLI)
+        df_lager.to_csv(LAGER_FILE, index=False)
         
-    # Učitavanje arhive
     if os.path.exists(ARHIVA_FILE):
         try:
             df_arhiva = pd.read_csv(ARHIVA_FILE)
