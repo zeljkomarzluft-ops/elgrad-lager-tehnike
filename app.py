@@ -14,10 +14,9 @@ SMTP_USER = "notifikacije@elgrad.hr"
 SMTP_PASS = "tvoja_lozinka" 
 EMAIL_PRIMATELJ = "zeljko.marzluft@elgrad.hr"
 
-# Glavni link tvog Google Sheeta
+# Link tvog Google Sheeta
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1NzbUwGxIYuK0bTRTdJ_1903gju30pd4AG41LZpMq0KM/edit?usp=sharing"
 
-# Pretvaranje običnog linka u direktni CSV link za čitanje
 def get_csv_url(sheet_url, sheet_name):
     base_id = sheet_url.split("/d/")[1].split("/")[0]
     return f"https://docs.google.com/spreadsheets/d/{base_id}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
@@ -27,9 +26,15 @@ def load_data():
     try:
         url_lager = get_csv_url(SHEET_URL, "lager")
         df_lager = pd.read_csv(url_lager)
-        # Očistimo nazive stupaca od suvišnih razmaka
         df_lager.columns = df_lager.columns.str.strip()
+        
+        # Prikaz na ekranu da vidimo točno stanje dohvaćenih podataka
+        st.sidebar.success("✅ Veza s Google Sheetom uspješna!")
+        st.sidebar.write("Stupci lagera:", df_lager.columns.tolist())
+        st.sidebar.write("Broj redaka:", len(df_lager))
+        
     except Exception as e:
+        st.sidebar.error(f"Greška kod čitanja lagera: {e}")
         df_lager = pd.DataFrame(columns=["naziv", "predviđena količina", "JM", "Kategorija"])
         
     try:
@@ -41,7 +46,6 @@ def load_data():
         
     return df_lager, df_arhiva
 
-# Pomoćna funkcija za spajanje preko gspread-a samo za upis/ažuriranje
 def get_gspread_worksheet(tab_name):
     gc = gspread.no_service_account() if hasattr(gspread, 'no_service_account') else gspread.Client(auth=None)
     sh = gspread.open_by_url(SHEET_URL)
@@ -139,52 +143,4 @@ with tab_prodaja:
         st.warning("Lager je prazan.")
     else:
         opcije_artikala = df_lager.apply(lambda row: f"{row['naziv']} (Dostupno: {row['predviđena količina']} {row['JM']})", axis=1).tolist()
-        odabrani_artikal = st.selectbox("Izaberi prodani artikal:", opcije_artikala)
-        
-        broj_ponude = st.text_input("📝 Unesi broj ponude / računa (Obavezno):")
-        
-        if odabrani_artikal:
-            puni_naziv_iz_selecta = odabrani_artikal.split(" (Dostupno:")[0]
-            red_artikla = df_lager[df_lager["naziv"].astype(str) == puni_naziv_iz_selecta].iloc[0]
-            trenutna_kolicina = float(red_artikla["predviđena količina"])
-            jm_artikla = str(red_artikla["JM"])
-            
-            kolicina_za_maknuti = st.number_input(f"Količina za maknuti ({jm_artikla}):", min_value=0.5, max_value=max(0.5, trenutna_kolicina), value=1.0, step=1.0)
-            
-            if st.button("💾 Proknjiži prodaju i pošalji obavijest", type="primary"):
-                if not broj_ponude.strip():
-                    st.error("Greška: Trgovac mora upisati broj ponude prije skidanja s lagera!")
-                else:
-                    if kolicina_za_maknuti >= trenutna_kolicina:
-                        updated_lager = df_lager[df_lager["naziv"].astype(str) != puni_naziv_iz_selecta]
-                    else:
-                        df_lager.loc[df_lager["naziv"].astype(str) == puni_naziv_iz_selecta, "predviđena količina"] = trenutna_kolicina - kolicina_za_maknuti
-                        updated_lager = df_lager
-                    
-                    vrijeme_sada = datetime.now().strftime("%Y-%m-%d %H:%M")
-                    nova_stavka_arhiva = pd.DataFrame({
-                        "Datum": [vrijeme_sada],
-                        "naziv": [puni_naziv_iz_selecta],
-                        "količina": [kolicina_za_maknuti],
-                        "JM": [jm_artikla],
-                        "Broj Ponude": [broj_ponude]
-                    })
-                    updated_arhiva = pd.concat([df_arhiva, nova_stavka_arhiva], ignore_index=True)
-                    
-                    save_to_sheet(updated_lager, updated_arhiva)
-                    posalji_email_obavijest(puni_naziv_iz_selecta, kolicina_za_maknuti, jm_artikla, broj_ponude)
-                    
-                    st.cache_data.clear()
-                    st.success(f"Uspješno prodano! Ponuda: {broj_ponude}. Mail poslan.")
-                    st.rerun()
-
-with tab_arhiva:
-    st.header("📊 Pregled prodane robe")
-    if df_arhiva.empty:
-        st.info("Još nema zabilježene prodaje.")
-    else:
-        q_ponuda = st.text_input("🔍 Pretraži po broju ponude:", "")
-        filtered_arhiva = df_arhiva.copy()
-        if q_ponuda and "Broj Ponude" in filtered_arhiva.columns:
-            filtered_arhiva = filtered_arhiva[filtered_arhiva["Broj Ponude"].astype(str).str.contains(q_ponuda, case=False, na=False)]
-        st.dataframe(filtered_arhiva, use_container_width=True)
+        odabrani_artikal = st.selectbox("Izaberi
