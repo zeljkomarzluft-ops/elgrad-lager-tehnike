@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import gspread
+from google.oauth2.service_account import Credentials
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -16,55 +17,51 @@ EMAIL_PRIMATELJ = "zeljko.marzluft@elgrad.hr"
 
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1NzbUwGxIYuK0bTRTdJ_1903gju30pd4AG41LZpMq0KM/edit?usp=sharing"
 
-def get_csv_url(sheet_url, sheet_name):
-    base_id = sheet_url.split("/d/")[1].split("/")[0]
-    return f"https://docs.google.com/spreadsheets/d/{base_id}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
-
 @st.cache_data(ttl=1)
 def load_data():
     try:
-        # Učitavanje lagera
-        url_lager = get_csv_url(SHEET_URL, "lager")
-        df_lager = pd.read_csv(url_lager)
+        gc = gspread.Client(auth=None)
+        sh = gc.open_by_url(SHEET_URL)
         
+        # 1. Učitavanje točno taba "lager"
+        ws_lager = sh.worksheet("lager")
+        data_lager = ws_lager.get_all_records()
+        df_lager = pd.DataFrame(data_lager)
         if not df_lager.empty:
             df_lager.columns = df_lager.columns.str.strip()
-            # Ako u tablici nema stupca Kategorija, dodajemo ga automatski
-            if "Kategorija" not in df_lager.columns:
-                df_lager["Kategorija"] = "Ostalo"
         else:
             df_lager = pd.DataFrame(columns=["Naziv", "Predviđena količina", "JM", "Kategorija"])
-    except Exception as e:
-        df_lager = pd.DataFrame(columns=["Naziv", "Predviđena količina", "JM", "Kategorija"])
-        
-    try:
-        # Učitavanje arhive
-        url_arhiva = get_csv_url(SHEET_URL, "arhiva")
-        df_arhiva = pd.read_csv(url_arhiva)
+            
+        # 2. Učitavanje točno taba "arhiva"
+        ws_arhiva = sh.worksheet("arhiva")
+        data_arhiva = ws_arhiva.get_all_records()
+        df_arhiva = pd.DataFrame(data_arhiva)
         if not df_arhiva.empty:
             df_arhiva.columns = df_arhiva.columns.str.strip()
         else:
             df_arhiva = pd.DataFrame(columns=["Datum", "naziv", "količina", "JM", "Broj Ponude"])
-    except Exception as e:
-        df_arhiva = pd.DataFrame(columns=["Datum", "naziv", "količina", "JM", "Broj Ponude"])
+            
+        st.sidebar.success(f"✅ Uspješno učitano {len(df_lager)} artikala s lagera!")
+        return df_lager, df_arhiva
         
-    st.sidebar.success(f"✅ Uspješno učitano {len(df_lager)} artikala!")
-    return df_lager, df_arhiva
+    except Exception as e:
+        st.sidebar.error(f"Greška kod učitavanja: {e}")
+        return pd.DataFrame(columns=["Naziv", "Predviđena količina", "JM", "Kategorija"]), pd.DataFrame(columns=["Datum", "naziv", "količina", "JM", "Broj Ponude"])
 
 def save_to_sheet(df_lager, df_arhiva):
     try:
-        gc = gspread.service_account(filename='')
-    except:
-        pass
-    sh = gspread.open_by_url(SHEET_URL)
-    
-    ws_lager = sh.worksheet("lager")
-    ws_lager.clear()
-    ws_lager.update([df_lager.columns.values.tolist()] + df_lager.values.tolist())
-    
-    ws_arhiva = sh.worksheet("arhiva")
-    ws_arhiva.clear()
-    ws_arhiva.update([df_arhiva.columns.values.tolist()] + df_arhiva.values.tolist())
+        gc = gspread.Client(auth=None)
+        sh = gc.open_by_url(SHEET_URL)
+        
+        ws_lager = sh.worksheet("lager")
+        ws_lager.clear()
+        ws_lager.update([df_lager.columns.values.tolist()] + df_lager.values.tolist())
+        
+        ws_arhiva = sh.worksheet("arhiva")
+        ws_arhiva.clear()
+        ws_arhiva.update([df_arhiva.columns.values.tolist()] + df_arhiva.values.tolist())
+    except Exception as e:
+        st.error(f"Greška kod spremanja: {e}")
 
 def posalji_email_obavijest(naziv_artikla, kolicina, jm, broj_ponude):
     try:
