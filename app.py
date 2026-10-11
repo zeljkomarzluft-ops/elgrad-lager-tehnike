@@ -167,7 +167,6 @@ with tab_pregled:
             filtered_df[naziv_col].astype(str).str.contains(search_query, case=False, na=False)
         ]
     
-    # Dodajemo stupac za odabir u tablicu
     filtered_df.insert(0, "Prodaj", False)
     
     edited_df = st.data_editor(
@@ -177,7 +176,6 @@ with tab_pregled:
         column_config={"Prodaj": st.column_config.CheckboxColumn("Odaberi za prodaju", required=True)}
     )
     
-    # Pronađi koji je artikal označen kvačicom
     odabrani_redci = edited_df[edited_df["Prodaj"] == True]
     
     if not odabrani_redci.empty:
@@ -194,7 +192,7 @@ with tab_pregled:
         trenutna_kolicina = float(originalni_red[kolicina_c])
         jm_artikla = str(originalni_red[jm_c])
         
-        st.info(Odabran artikal: **{puni_naziv}** (Dostupno: {trenutna_kolicina} {jm_artikla}))
+        st.info(f"Odabran artikal: **{puni_naziv}** (Dostupno: {trenutna_kolicina} {jm_artikla})")
         
         col1, col2 = st.columns(2)
         with col1:
@@ -241,3 +239,18 @@ with tab_dodaj:
             if not novi_naziv.strip():
                 st.error("Upiši naziv artikla!")
             else:
+                col_names = df_lager.columns.tolist() if not df_lager.empty else ["Naziv", "Predviđena količina", "JM", "Kategorija"]
+                new_row = pd.DataFrame([[novi_naziv, nova_kolicina, nova_jm, nova_kategorija]], columns=col_names[:4])
+                updated_lager = pd.concat([df_lager, new_row], ignore_index=True)
+                
+                save_data(updated_lager, updated_arhiva)
+                st.cache_data.clear()
+                st.success("Uspješno dodano na lager!")
+                st.rerun()
+
+with tab_arhiva:
+    st.header("📊 Pregled prodane robe")
+    if df_arhiva.empty:
+        st.info("Još nema zabilježene prodaje.")
+    else:
+        st.dataframe(df_arhiva, use_container_width=True)
