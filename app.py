@@ -112,6 +112,9 @@ def load_data():
     return df_lager, df_arhiva
 
 def save_data(df_lager, df_arhiva):
+    # Očistimo pomoćni stupac 'Prodaj' ako je slučajno ostao u DataFrames prije snimanja
+    if "Prodaj" in df_lager.columns:
+        df_lager = df_lager.drop(columns=["Prodaj"])
     df_lager.to_csv(LAGER_FILE, index=False)
     df_arhiva.to_csv(ARHIVA_FILE, index=False)
 
@@ -239,11 +242,15 @@ with tab_dodaj:
             if not novi_naziv.strip():
                 st.error("Upiši naziv artikla!")
             else:
-                col_names = df_lager.columns.tolist() if not df_lager.empty else ["Naziv", "Predviđena količina", "JM", "Kategorija"]
-                new_row = pd.DataFrame([[novi_naziv, nova_kolicina, nova_jm, nova_kategorija]], columns=col_names[:4])
+                new_row = pd.DataFrame({
+                    "Naziv": [novi_naziv],
+                    "Predviđena količina": [nova_kolicina],
+                    "JM": [nova_jm],
+                    "Kategorija": [nova_kategorija]
+                })
                 updated_lager = pd.concat([df_lager, new_row], ignore_index=True)
                 
-                save_data(updated_lager, updated_arhiva)
+                save_data(updated_lager, df_arhiva)
                 st.cache_data.clear()
                 st.success("Uspješno dodano na lager!")
                 st.rerun()
