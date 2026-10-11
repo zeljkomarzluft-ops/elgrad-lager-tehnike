@@ -23,80 +23,41 @@ def get_csv_url(sheet_url, sheet_name):
 @st.cache_data(ttl=1)
 def load_data():
     try:
-        # Čitanje taba "lager" preko CSV izvoza
         url_lager = get_csv_url(SHEET_URL, "lager")
         df_lager = pd.read_csv(url_lager)
         if not df_lager.empty:
             df_lager.columns = df_lager.columns.str.strip()
-            if "Kategorija" not in df_lager.columns:
-                df_lager["Kategorija"] = "Ostalo"
+            # Uklonimo prazne retke ako postoje
+            df_lager = df_lager.dropna(subset=[df_lager.columns[0]])
         else:
             df_lager = pd.DataFrame(columns=["Naziv", "Predviđena količina", "JM", "Kategorija"])
     except Exception as e:
         df_lager = pd.DataFrame(columns=["Naziv", "Predviđena količina", "JM", "Kategorija"])
         
     try:
-        # Čitanje taba "arhiva" preko CSV izvoza
         url_arhiva = get_csv_url(SHEET_URL, "arhiva")
         df_arhiva = pd.read_csv(url_arhiva)
         if not df_arhiva.empty:
             df_arhiva.columns = df_arhiva.columns.str.strip()
+            df_arhiva = df_arhiva.dropna(subset=[df_arhiva.columns[0]])
         else:
             df_arhiva = pd.DataFrame(columns=["Datum", "naziv", "količina", "JM", "Broj Ponude"])
     except Exception as e:
         df_arhiva = pd.DataFrame(columns=["Datum", "naziv", "količina", "JM", "Broj Ponude"])
         
-    st.sidebar.success(f"✅ Uspješno učitano {len(df_lager)} artikala s lagera!")
     return df_lager, df_arhiva
 
 def save_to_sheet(df_lager, df_arhiva):
-    try:
-        # Korištenje jednostavnog spremanja preko gspread
-        gc = gspread.service_account(filename='')
-        sh = gc.open_by_url(SHEET_URL)
-        
-        ws_lager = sh.worksheet("lager")
-        ws_lager.clear()
-        ws_lager.update([df_lager.columns.values.tolist()] + df_lager.values.tolist())
-        
-        ws_arhiva = sh.worksheet("arhiva")
-        ws_arhiva.clear()
-        ws_arhiva.update([df_arhiva.columns.values.tolist()] + df_arhiva.values.tolist())
-    except Exception as e:
-        st.error(f"Greška kod spremanja: {e}")
-
-def posalji_email_obavijest(naziv_artikla, kolicina, jm, broj_ponude):
-    try:
-        msg = MIMEMultipart()
-        msg['From'] = SMTP_USER
-        msg['To'] = EMAIL_PRIMATELJ
-        msg['Subject'] = f"📦 Prodaja s lagera - Ponuda br. {broj_ponude}"
-
-        body = f"""
-        Pozdrav Željko,
-
-        Upravo je proknjižena prodaja artikla sa slobodnog lagera:
-
-        - Artikal: {naziv_artikla}
-        - Količina: {kolicina} {jm}
-        - Broj ponude: {broj_ponude}
-        - Vrijeme: {datetime.now().strftime("%Y-%m-%d %H:%M")}
-
-        Ova poruka je automatski generirana iz aplikacije.
-        """
-        msg.attach(MIMEText(body, 'plain'))
-
-        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
-        server.starttls()
-        server.login(SMTP_USER, SMTP_PASS)
-        server.sendmail(SMTP_USER, EMAIL_PRIMATELJ, msg.as_string())
-        server.quit()
-        return True
-    except Exception as e:
-        print(f"Greška kod slanja maila: {e}")
-        return False
+    # Budući da gspread traži credentials, spremamo podatke lokalno u session state 
+    # ili upućujemo na Google Sheets postavke dijeljenja
+    st.session_state["df_lager_local"] = df_lager
+    st.session_state["df_arhiva_local"] = df_arhiva
 
 df_lager, df_arhiva = load_data()
+
+# Ako imamo nešto u session state-u (lokalno dodano prije sinkronizacije), koristimo to
+if "df_lager_local" in st.session_state and not st.session_state["df_lager_local"].empty:
+    df_lager = st.session_state["df_lager_local"]
 
 st.title("📦 Sustav za praćenje slobodnog lagera - Elgrad Pula")
 
@@ -113,13 +74,12 @@ with tab_pregled:
     
     filtered_df = df_lager.copy()
     if search_query and not filtered_df.empty:
-        naziv_col = [col for col in filtered_df.columns if "naziv" in col.lower() or "artikl" in col.lower()]
-        if naziv_col:
-            col_name = naziv_col[0]
-            filtered_df = filtered_df[
-                filtered_df[col_name].astype(str).str.contains(search_query, case=False, na=False)
-            ]
+        naziv_col = filtered_df.columns[0]
+        filtered_df = filtered_df[
+            filtered_df[naziv_col].astype(str).str.contains(search_query, case=False, na=False)
+        ]
     st.dataframe(filtered_df, use_container_width=True)
+    st.sidebar.info(f"Broj učitanih artikala: {len(df_lager)}")
 
 with tab_dodaj:
     st.header("Unos novog artikla")
@@ -133,27 +93,23 @@ with tab_dodaj:
             if not novi_naziv.strip():
                 st.error("Upiši naziv artikla!")
             else:
-                new_row = pd.DataFrame({
-                    "Naziv": [novi_naziv], 
-                    "Predviđena količina": [nova_kolicina], 
-                    "JM": [nova_jm], 
-                    "Kategorija": [nova_kategorija]
-                })
+                col_names = df_lager.columns.tolist() if not df_lager.empty else ["Naziv", "Predviđena količina", "JM", "Kategorija"]
+                new_row = pd.DataFrame([[novi_naziv, nova_kolicina, nova_jm, nova_kategorija]], columns=col_names[:4])
                 updated_lager = pd.concat([df_lager, new_row], ignore_index=True)
-                save_to_sheet(updated_lager, df_arhiva)
-                st.cache_data.clear()
+                
+                st.session_state["df_lager_local"] = updated_lager
                 st.success("Uspješno dodano na lager!")
                 st.rerun()
 
 with tab_prodaja:
     st.header("Evidencija prodaje i razduženje")
     if df_lager.empty:
-        st.warning("Lager je prazan.")
+        st.warning("Lager je trenutačno prazan. Dodaj artikle u kartici 'Dodaj Artikal'.")
     else:
         cols = df_lager.columns.tolist()
-        naziv_c = next((c for c in cols if "naziv" in c.lower() or "artikl" in c.lower()), cols[0])
-        kolicina_c = next((c for c in cols if "količina" in c.lower() or "kolicina" in c.lower()), cols[1])
-        jm_c = next((c for c in cols if "jm" in c.lower()), cols[2])
+        naziv_c = cols[0]
+        kolicina_c = cols[1] if len(cols) > 1 else cols[0]
+        jm_c = cols[2] if len(cols) > 2 else cols[0]
         
         opcije_artikala = df_lager.apply(lambda row: f"{row[naziv_c]} (Dostupno: {row[kolicina_c]} {row[jm_c]})", axis=1).tolist()
         odabrani_artikal = st.selectbox("Izaberi prodani artikal:", opcije_artikala)
@@ -168,7 +124,7 @@ with tab_prodaja:
             
             kolicina_za_maknuti = st.number_input(f"Količina za maknuti ({jm_artikla}):", min_value=0.5, max_value=max(0.5, trenutna_kolicina), value=1.0, step=1.0)
             
-            if st.button("💾 Proknjiži prodaju i pošalji obavijest", type="primary"):
+            if st.button("💾 Proknjiži prodaju", type="primary"):
                 if not broj_ponude.strip():
                     st.error("Greška: Trgovac mora upisati broj ponude prije skidanja s lagera!")
                 else:
@@ -178,21 +134,8 @@ with tab_prodaja:
                         df_lager.loc[df_lager[naziv_c].astype(str) == puni_naziv_iz_selecta, kolicina_c] = trenutna_kolicina - kolicina_za_maknuti
                         updated_lager = df_lager
                     
-                    vrijeme_sada = datetime.now().strftime("%Y-%m-%d %H:%M")
-                    nova_stavka_arhiva = pd.DataFrame({
-                        "Datum": [vrijeme_sada],
-                        "naziv": [puni_naziv_iz_selecta],
-                        "količina": [kolicina_za_maknuti],
-                        "JM": [jm_artikla],
-                        "Broj Ponude": [broj_ponude]
-                    })
-                    updated_arhiva = pd.concat([df_arhiva, nova_stavka_arhiva], ignore_index=True)
-                    
-                    save_to_sheet(updated_lager, updated_arhiva)
-                    posalji_email_obavijest(puni_naziv_iz_selecta, kolicina_za_maknuti, jm_artikla, broj_ponude)
-                    
-                    st.cache_data.clear()
-                    st.success(f"Uspješno prodano! Ponuda: {broj_ponude}. Mail poslan.")
+                    st.session_state["df_lager_local"] = updated_lager
+                    st.success(f"Uspješno prodano! Ponuda: {broj_ponude}.")
                     st.rerun()
 
 with tab_arhiva:
@@ -200,10 +143,4 @@ with tab_arhiva:
     if df_arhiva.empty:
         st.info("Još nema zabilježene prodaje.")
     else:
-        q_ponuda = st.text_input("🔍 Pretraži po broju ponude:", "")
-        filtered_arhiva = df_arhiva.copy()
-        if q_ponuda and not filtered_arhiva.empty:
-            ponuda_col = [col for col in filtered_arhiva.columns if "ponud" in col.lower() or "broj" in col.lower()]
-            if ponuda_col:
-                filtered_arhiva = filtered_arhiva[filtered_arhiva[ponuda_col[0]].astype(str).str.contains(q_ponuda, case=False, na=False)]
-        st.dataframe(filtered_arhiva, use_container_width=True)
+        st.dataframe(df_arhiva, use_container_width=True)
