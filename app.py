@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-import gspread
+import os
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -14,75 +14,71 @@ SMTP_USER = "notifikacije@elgrad.hr"
 SMTP_PASS = "tvoja_lozinka" 
 EMAIL_PRIMATELJ = "zeljko.marzluft@elgrad.hr"
 
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1NzbUwGxIYuK0bTRTdJ_1903gju30pd4AG41LZpMq0KM/edit?usp=sharing"
+# Datoteke lokalno na Streamlit poslužitelju (trajno spremište na GitHubu)
+LAGER_FILE = "lager.csv"
+ARHIVA_FILE = "arhiva.csv"
 
 @st.cache_data(ttl=1)
 def load_data():
-    try:
-        # Stabilno čitanje direktno iz Google Sheeta preko gspread open_by_url
-        gc = gspread.Client(auth=None)
-        sh = gc.open_by_url(SHEET_URL)
-        
-        # Učitavanje tabova
-        ws_lager = sh.worksheet("lager")
-        rows_lager = ws_lager.get_all_records()
-        df_lager = pd.DataFrame(rows_lager)
-        if not df_lager.empty:
+    # Učitavanje lagera
+    if os.path.exists(LAGER_FILE):
+        try:
+            df_lager = pd.read_csv(LAGER_FILE)
             df_lager.columns = df_lager.columns.str.strip()
-        else:
-            # Fallback ako get_all_records ne prepozna zaglavlja, čitamo sve vrijednosti
-            all_values = ws_lager.get_all_values()
-            if len(all_values) > 1:
-                df_lager = pd.DataFrame(all_values[1:], columns=all_values[0])
-                df_lager.columns = df_lager.columns.str.strip()
-            else:
-                df_lager = pd.DataFrame(columns=["Naziv", "Predviđena količina", "JM", "Kategorija"])
-
-        ws_arhiva = sh.worksheet("arhiva")
-        rows_arhiva = ws_arhiva.get_all_records()
-        df_arhiva = pd.DataFrame(rows_arhiva)
-        if not df_arhiva.empty:
-            df_arhiva.columns = df_arhiva.columns.str.strip()
-        else:
-            df_arhiva = pd.DataFrame(columns=["Datum", "naziv", "količina", "JM", "Broj Ponude"])
-            
-    except Exception as e:
-        # Ako gspread javi grešku, koristimo lokalne podatke da aplikacija ne pukne
-        if "df_lager_local" in st.session_state:
-            df_lager = st.session_state["df_lager_local"]
-        else:
+        except:
             df_lager = pd.DataFrame(columns=["Naziv", "Predviđena količina", "JM", "Kategorija"])
-            
-        if "df_arhiva_local" in st.session_state:
-            df_arhiva = st.session_state["df_arhiva_local"]
-        else:
+    else:
+        # Početni primjeri ako datoteka ne postoji
+        df_lager = pd.DataFrame(columns=["Naziv", "Predviđena količina", "JM", "Kategorija"])
+        
+    # Učitavanje arhive
+    if os.path.exists(ARHIVA_FILE):
+        try:
+            df_arhiva = pd.read_csv(ARHIVA_FILE)
+            df_arhiva.columns = df_arhiva.columns.str.strip()
+        except:
             df_arhiva = pd.DataFrame(columns=["Datum", "naziv", "količina", "JM", "Broj Ponude"])
-            
+    else:
+        df_arhiva = pd.DataFrame(columns=["Datum", "naziv", "količina", "JM", "Broj Ponude"])
+        
     return df_lager, df_arhiva
 
-def save_to_sheet(df_lager, df_arhiva):
-    st.session_state["df_lager_local"] = df_lager
-    st.session_state["df_arhiva_local"] = df_arhiva
+def save_data(df_lager, df_arhiva):
+    df_lager.to_csv(LAGER_FILE, index=False)
+    df_arhiva.to_csv(ARHIVA_FILE, index=False)
+
+def posalji_email_obavijest(naziv_artikla, kolicina, jm, broj_ponude):
     try:
-        gc = gspread.Client(auth=None)
-        sh = gc.open_by_url(SHEET_URL)
-        
-        ws_lager = sh.worksheet("lager")
-        ws_lager.clear()
-        ws_lager.update([df_lager.columns.values.tolist()] + df_lager.values.tolist())
-        
-        ws_arhiva = sh.worksheet("arhiva")
-        ws_arhiva.clear()
-        ws_arhiva.update([df_arhiva.columns.values.tolist()] + df_arhiva.values.tolist())
+        msg = MIMEMultipart()
+        msg['From'] = SMTP_USER
+        msg['To'] = EMAIL_PRIMATELJ
+        msg['Subject'] = f"📦 Prodaja s lagera - Ponuda br. {broj_ponude}"
+
+        body = f"""
+        Pozdrav Željko,
+
+        Upravo je proknjižena prodaja artikla sa slobodnog lagera:
+
+        - Artikal: {naziv_artikla}
+        - Količina: {kolicina} {jm}
+        - Broj ponude: {broj_ponude}
+        - Vrijeme: {datetime.now().strftime("%Y-%m-%d %H:%M")}
+
+        Ova poruka je automatski generirana iz aplikacije.
+        """
+        msg.attach(MIMEText(body, 'plain'))
+
+        server = smtplib.SMTP(SMTP_SERVER, SMTP_PORT)
+        server.starttls()
+        server.login(SMTP_USER, SMTP_PASS)
+        server.sendmail(SMTP_USER, EMAIL_PRIMATELJ, msg.as_string())
+        server.quit()
+        return True
     except Exception as e:
-        print(f"Sinkronizacija u pozadini: {e}")
+        print(f"Greška kod slanja maila: {e}")
+        return False
 
 df_lager, df_arhiva = load_data()
-
-# Ako imamo lokalno spremljene podatke koji sadrže novije unese, spojimo ih
-if "df_lager_local" in st.session_state and not st.session_state["df_lager_local"].empty:
-    # Kombiniramo Google Sheet podatke i lokalne unose bez dupliranja
-    df_lager = pd.concat([df_lager, st.session_state["df_lager_local"]]).drop_duplicates().reset_index(drop=True)
 
 st.title("📦 Sustav za praćenje slobodnog lagera - Elgrad Pula")
 
@@ -122,7 +118,7 @@ with tab_dodaj:
                 new_row = pd.DataFrame([[novi_naziv, nova_kolicina, nova_jm, nova_kategorija]], columns=col_names[:4])
                 updated_lager = pd.concat([df_lager, new_row], ignore_index=True)
                 
-                save_to_sheet(updated_lager, df_arhiva)
+                save_data(updated_lager, df_arhiva)
                 st.cache_data.clear()
                 st.success("Uspješno dodano na lager!")
                 st.rerun()
@@ -130,7 +126,7 @@ with tab_dodaj:
 with tab_prodaja:
     st.header("Evidencija prodaje i razduženje")
     if df_lager.empty:
-        st.warning("Lager je prazan.")
+        st.warning("Lager je trenutačno prazan.")
     else:
         cols = df_lager.columns.tolist()
         naziv_c = cols[0]
@@ -150,7 +146,7 @@ with tab_prodaja:
             
             kolicina_za_maknuti = st.number_input(f"Količina za maknuti ({jm_artikla}):", min_value=0.5, max_value=max(0.5, trenutna_kolicina), value=1.0, step=1.0)
             
-            if st.button("💾 Proknjiži prodaju", type="primary"):
+            if st.button("💾 Proknjiži prodaju i pošalji obavijest", type="primary"):
                 if not broj_ponude.strip():
                     st.error("Greška: Trgovac mora upisati broj ponude prije skidanja s lagera!")
                 else:
@@ -170,9 +166,11 @@ with tab_prodaja:
                     })
                     updated_arhiva = pd.concat([df_arhiva, nova_stavka_arhiva], ignore_index=True)
                     
-                    save_to_sheet(updated_lager, updated_arhiva)
+                    save_data(updated_lager, updated_arhiva)
+                    posalji_email_obavijest(puni_naziv_iz_selecta, kolicina_za_maknuti, jm_artikla, broj_ponude)
+                    
                     st.cache_data.clear()
-                    st.success(f"Uspješno prodano! Ponuda: {broj_ponude}.")
+                    st.success(f"Uspješno prodano! Ponuda: {broj_ponude}. Mail poslan.")
                     st.rerun()
 
 with tab_arhiva:
