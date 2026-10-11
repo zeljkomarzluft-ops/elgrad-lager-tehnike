@@ -23,11 +23,15 @@ def get_csv_url(sheet_url, sheet_name):
 @st.cache_data(ttl=1)
 def load_data():
     try:
-        # Učitavanje lagera preko pouzdanog CSV linka
+        # Učitavanje lagera
         url_lager = get_csv_url(SHEET_URL, "lager")
         df_lager = pd.read_csv(url_lager)
+        
         if not df_lager.empty:
             df_lager.columns = df_lager.columns.str.strip()
+            # Ako u tablici nema stupca Kategorija, dodajemo ga automatski
+            if "Kategorija" not in df_lager.columns:
+                df_lager["Kategorija"] = "Ostalo"
         else:
             df_lager = pd.DataFrame(columns=["Naziv", "Predviđena količina", "JM", "Kategorija"])
     except Exception as e:
@@ -48,10 +52,11 @@ def load_data():
     return df_lager, df_arhiva
 
 def save_to_sheet(df_lager, df_arhiva):
-    # Korištenje jednostavnog spremanja preko gspread klijenta bez auth parametra
-    gc = gspread.service_account(filename='') if hasattr(gspread, 'service_account') else None
-    # Ako nema servisnog računa, otvaramo preko standardnog web pristupa
-    sh = gspread.authorize(None).open_by_url(SHEET_URL) if hasattr(gspread, 'authorize') else gspread.open_by_url(SHEET_URL)
+    try:
+        gc = gspread.service_account(filename='')
+    except:
+        pass
+    sh = gspread.open_by_url(SHEET_URL)
     
     ws_lager = sh.worksheet("lager")
     ws_lager.clear()
