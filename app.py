@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import gspread
-from google.oauth2.service_account import Credentials
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -15,46 +14,45 @@ SMTP_USER = "notifikacije@elgrad.hr"
 SMTP_PASS = "tvoja_lozinka" 
 EMAIL_PRIMATELJ = "zeljko.marzluft@elgrad.hr"
 
-# Ovdje upiši svoj link Google Sheeta
+# Glavni link tvog Google Sheeta
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1NzbUwGxIYuK0bTRTdJ_1903gju30pd4AG41LZpMq0KM/edit?usp=sharing"
 
-@st.cache_resource
-def get_worksheet(tab_name):
-    gc = gspread.no_service_account() if hasattr(gspread, 'no_service_account') else gspread.Client(auth=None)
-    # Ako je tablica javna (Editor za sve s linkom), otvaramo preko URL-a:
-    try:
-        sh = gspread.open_by_url(SHEET_URL)
-    except:
-        # Rezervna opcija ako gspread traži prijavu
-        import gspread_formatting
-        sh = gspread.Client(auth=None).open_by_url(SHEET_URL)
-        
-    return sh.worksheet(tab_name)
+# Pretvaranje običnog linka u direktni CSV link za čitanje
+def get_csv_url(sheet_url, sheet_name):
+    base_id = sheet_url.split("/d/")[1].split("/")[0]
+    return f"https://docs.google.com/spreadsheets/d/{base_id}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
 
 @st.cache_data(ttl=1)
 def load_data():
     try:
-        ws_lager = get_worksheet("lager")
-        data_lager = ws_lager.get_all_records()
-        df_lager = pd.DataFrame(data_lager)
+        url_lager = get_csv_url(SHEET_URL, "lager")
+        df_lager = pd.read_csv(url_lager)
+        # Očistimo nazive stupaca od suvišnih razmaka
+        df_lager.columns = df_lager.columns.str.strip()
     except Exception as e:
         df_lager = pd.DataFrame(columns=["naziv", "predviđena količina", "JM", "Kategorija"])
         
     try:
-        ws_arhiva = get_worksheet("arhiva")
-        data_arhiva = ws_arhiva.get_all_records()
-        df_arhiva = pd.DataFrame(data_arhiva)
+        url_arhiva = get_csv_url(SHEET_URL, "arhiva")
+        df_arhiva = pd.read_csv(url_arhiva)
+        df_arhiva.columns = df_arhiva.columns.str.strip()
     except Exception as e:
         df_arhiva = pd.DataFrame(columns=["Datum", "naziv", "količina", "JM", "Broj Ponude"])
         
     return df_lager, df_arhiva
 
+# Pomoćna funkcija za spajanje preko gspread-a samo za upis/ažuriranje
+def get_gspread_worksheet(tab_name):
+    gc = gspread.no_service_account() if hasattr(gspread, 'no_service_account') else gspread.Client(auth=None)
+    sh = gspread.open_by_url(SHEET_URL)
+    return sh.worksheet(tab_name)
+
 def save_to_sheet(df_lager, df_arhiva):
-    ws_lager = get_worksheet("lager")
+    ws_lager = get_gspread_worksheet("lager")
     ws_lager.clear()
     ws_lager.update([df_lager.columns.values.tolist()] + df_lager.values.tolist())
     
-    ws_arhiva = get_worksheet("arhiva")
+    ws_arhiva = get_gspread_worksheet("arhiva")
     ws_arhiva.clear()
     ws_arhiva.update([df_arhiva.columns.values.tolist()] + df_arhiva.values.tolist())
 
