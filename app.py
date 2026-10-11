@@ -17,45 +17,55 @@ EMAIL_PRIMATELJ = "zeljko.marzluft@elgrad.hr"
 # Link tvog Google Sheeta
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1NzbUwGxIYuK0bTRTdJ_1903gju30pd4AG41LZpMq0KM/edit?usp=sharing"
 
-def get_csv_url(sheet_url, sheet_name):
-    base_id = sheet_url.split("/d/")[1].split("/")[0]
-    return f"https://docs.google.com/spreadsheets/d/{base_id}/gviz/tq?tqx=out:csv&sheet={sheet_name}"
+@st.cache_resource
+def get_gspread_client():
+    # Inicijalizacija gspread klijenta bez servisnog računa (za javne/dijeljene tablice)
+    return gspread.service_account_from_dict({}) if False else gspread.Client(auth=None)
 
 @st.cache_data(ttl=1)
 def load_data():
     try:
-        url_lager = get_csv_url(SHEET_URL, "lager")
-        df_lager = pd.read_csv(url_lager)
-        df_lager.columns = df_lager.columns.str.strip()
+        gc = gspread.Client(auth=None)
+        sh = gc.open_by_url(SHEET_URL)
         
-        st.sidebar.success("✅ Veza s Google Sheetom uspješna!")
-        st.sidebar.write("Stupci lagera:", df_lager.columns.tolist())
-        st.sidebar.write("Broj redaka:", len(df_lager))
-        
-    except Exception as e:
-        st.sidebar.error(f"Greška kod čitanja lagera: {e}")
-        df_lager = pd.DataFrame(columns=["naziv", "predviđena količina", "JM", "Kategorija"])
-        
-    try:
-        url_arhiva = get_csv_url(SHEET_URL, "arhiva")
-        df_arhiva = pd.read_csv(url_arhiva)
-        df_arhiva.columns = df_arhiva.columns.str.strip()
-    except Exception as e:
-        df_arhiva = pd.DataFrame(columns=["Datum", "naziv", "količina", "JM", "Broj Ponude"])
-        
-    return df_lager, df_arhiva
+        # Učitavanje lagera
+        try:
+            ws_lager = sh.worksheet("lager")
+            data_lager = ws_lager.get_all_records()
+            df_lager = pd.DataFrame(data_lager)
+            if df_lager.empty:
+                df_lager = pd.DataFrame(columns=["naziv", "predviđena količina", "JM", "Kategorija"])
+        except Exception:
+            df_lager = pd.DataFrame(columns=["naziv", "predviđena količina", "JM", "Kategorija"])
 
-def get_gspread_worksheet(tab_name):
-    gc = gspread.no_service_account() if hasattr(gspread, 'no_service_account') else gspread.Client(auth=None)
-    sh = gspread.open_by_url(SHEET_URL)
-    return sh.worksheet(tab_name)
+        # Učitavanje arhive
+        try:
+            ws_arhiva = sh.worksheet("arhiva")
+            data_arhiva = ws_arhiva.get_all_records()
+            df_arhiva = pd.DataFrame(data_arhiva)
+            if df_arhiva.empty:
+                df_arhiva = pd.DataFrame(columns=["Datum", "naziv", "količina", "JM", "Broj Ponude"])
+        except Exception:
+            df_arhiva = pd.DataFrame(columns=["Datum", "naziv", "količina", "JM", "Broj Ponude"])
+            
+        st.sidebar.success("✅ Uspješno spojeno na Google Sheet!")
+        return df_lager, df_arhiva
+        
+    except Exception as e:
+        st.sidebar.error(f"Greška pri spajanju: {e}")
+        return pd.DataFrame(columns=["naziv", "predviđena količina", "JM", "Kategorija"]), pd.DataFrame(columns=["Datum", "naziv", "količina", "JM", "Broj Ponude"])
 
 def save_to_sheet(df_lager, df_arhiva):
-    ws_lager = get_gspread_worksheet("lager")
+    gc = gspread.Client(auth=None)
+    sh = gc.open_by_url(SHEET_URL)
+    
+    # Spremanje lagera
+    ws_lager = sh.worksheet("lager")
     ws_lager.clear()
     ws_lager.update([df_lager.columns.values.tolist()] + df_lager.values.tolist())
     
-    ws_arhiva = get_gspread_worksheet("arhiva")
+    # Spremanje arhive
+    ws_arhiva = sh.worksheet("arhiva")
     ws_arhiva.clear()
     ws_arhiva.update([df_arhiva.columns.values.tolist()] + df_arhiva.values.tolist())
 
