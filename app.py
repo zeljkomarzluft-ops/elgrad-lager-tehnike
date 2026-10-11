@@ -17,7 +17,6 @@ EMAIL_PRIMATELJ = "zeljko.marzluft@elgrad.hr"
 LAGER_FILE = "lager.csv"
 ARHIVA_FILE = "arhiva.csv"
 
-# Cjelovita lista svih artikala iz tvoje tablice
 POZNATI_ARTIKLI = [
     {"Naziv": "[RO20516992] PIPA BLANCOVITIS-S NT 3 cijevi", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Pipe"},
     {"Naziv": "[RO20517348] SUDOPER BLANCOMETRA 5 S TARTUFO sa dalj.uprav.", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Sudoperi"},
@@ -89,12 +88,14 @@ POZNATI_ARTIKLI = [
 
 @st.cache_data(ttl=1)
 def load_data():
+    # Uvijek forsiramo svježe učitavanje cjelovite liste poznatih artikala ako datoteka ne postoji ili je prazna
     if os.path.exists(LAGER_FILE):
         try:
             df_lager = pd.read_csv(LAGER_FILE)
             df_lager.columns = df_lager.columns.str.strip()
-            if df_lager.empty:
+            if df_lager.empty or len(df_lager) < 5:
                 df_lager = pd.DataFrame(POZNATI_ARTIKLI)
+                df_lager.to_csv(LAGER_FILE, index=False)
         except:
             df_lager = pd.DataFrame(POZNATI_ARTIKLI)
     else:
@@ -200,51 +201,4 @@ with tab_prodaja:
         cols = df_lager.columns.tolist()
         naziv_c = cols[0]
         kolicina_c = cols[1] if len(cols) > 1 else cols[0]
-        jm_c = cols[2] if len(cols) > 2 else cols[0]
-        
-        opcije_artikala = df_lager.apply(lambda row: f"{row[naziv_c]} (Dostupno: {row[kolicina_c]} {row[jm_c]})", axis=1).tolist()
-        odabrani_artikal = st.selectbox("Izaberi prodani artikal:", opcije_artikala)
-        
-        broj_ponude = st.text_input("📝 Unesi broj ponude / računa (Obavezno):")
-        
-        if odabrani_artikal:
-            puni_naziv_iz_selecta = odabrani_artikal.split(" (Dostupno:")[0]
-            red_artikla = df_lager[df_lager[naziv_c].astype(str) == puni_naziv_iz_selecta].iloc[0]
-            trenutna_kolicina = float(red_artikla[kolicina_c])
-            jm_artikla = str(red_artikla[jm_c])
-            
-            kolicina_za_maknuti = st.number_input(f"Količina za maknuti ({jm_artikla}):", min_value=0.5, max_value=max(0.5, trenutna_kolicina), value=1.0, step=1.0)
-            
-            if st.button("💾 Proknjiži prodaju i pošalji obavijest", type="primary"):
-                if not broj_ponude.strip():
-                    st.error("Greška: Trgovac mora upisati broj ponude prije skidanja s lagera!")
-                else:
-                    if kolicina_za_maknuti >= trenutna_kolicina:
-                        updated_lager = df_lager[df_lager[naziv_c].astype(str) != puni_naziv_iz_selecta]
-                    else:
-                        df_lager.loc[df_lager[naziv_c].astype(str) == puni_naziv_iz_selecta, kolicina_c] = trenutna_kolicina - kolicina_za_maknuti
-                        updated_lager = df_lager
-                    
-                    vrijeme_sada = datetime.now().strftime("%Y-%m-%d %H:%M")
-                    nova_stavka_arhiva = pd.DataFrame({
-                        "Datum": [vrijeme_sada],
-                        "naziv": [puni_naziv_iz_selecta],
-                        "količina": [kolicina_za_maknuti],
-                        "JM": [jm_artikla],
-                        "Broj Ponude": [broj_ponude]
-                    })
-                    updated_arhiva = pd.concat([df_arhiva, nova_stavka_arhiva], ignore_index=True)
-                    
-                    save_data(updated_lager, updated_arhiva)
-                    posalji_email_obavijest(puni_naziv_iz_selecta, kolicina_za_maknuti, jm_artikla, broj_ponude)
-                    
-                    st.cache_data.clear()
-                    st.success(f"Uspješno prodano! Ponuda: {broj_ponude}. Mail poslan.")
-                    st.rerun()
-
-with tab_arhiva:
-    st.header("📊 Pregled prodane robe")
-    if df_arhiva.empty:
-        st.info("Još nema zabilježene prodaje.")
-    else:
-        st.dataframe(df_arhiva, use_container_width=True)
+        jm_c = cols[2] if len(cols) > 2 else cols
