@@ -1,121 +1,61 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-import os
+from supabase import create_client, Client
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 st.set_page_config(page_title="Upravljanje Lagerom - Elgrad Pula", layout="wide")
 
+# Spajanje na Supabase koristeći Secrets
+SUPABASE_URL = st.secrets["supabase"]["url"]
+SUPABASE_KEY = st.secrets["supabase"]["key"]
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# SMTP postavke iz Secrets
 SMTP_SERVER = st.secrets["smtp"]["server"] if "smtp" in st.secrets else "smtp.gmail.com"
 SMTP_PORT = int(st.secrets["smtp"]["port"]) if "smtp" in st.secrets else 587
 SMTP_USER = st.secrets["smtp"]["user"] if "smtp" in st.secrets else ""
 SMTP_PASS = st.secrets["smtp"]["password"] if "smtp" in st.secrets else ""
 EMAIL_PRIMATELJ = st.secrets["smtp"]["recipient"] if "smtp" in st.secrets else "zeljko.marzluft@elgrad.hr"
 
-LAGER_FILE = "lager.csv"
-ARHIVA_FILE = "arhiva.csv"
-
-POZNATI_ARTIKLI = [
-    {"Naziv": "[RO20516992] PIPA BLANCOVITIS-S NT 3 cijevi", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Pipe"},
-    {"Naziv": "[RO20517348] SUDOPER BLANCOMETRA 5 S TARTUFO sa dalj.uprav.", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Sudoperi"},
-    {"Naziv": "[RO20517722] PIPA BLANCODARAS Silgranit-look Alumetalic VT", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Pipe"},
-    {"Naziv": "[RO20517742] PIPA BLANCOMIDA KROM VT", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Pipe"},
-    {"Naziv": "[RO20519416] PIPA BLANCOMIDA VT alumetalic", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Pipe"},
-    {"Naziv": "[RO20519418] PIPA BLANCOMIDA SILGRANIT BIJELA", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Pipe"},
-    {"Naziv": "[RO20521468] BLANCO FLEXON II 45/2", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Tehnika"},
-    {"Naziv": "[RO20521473] Blanco Flexon II XL 60/3", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Tehnika"},
-    {"Naziv": "[RO20521840] SUDOPER BLANCO ETAGON 500-IF", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Sudoperi"},
-    {"Naziv": "[RO20523326] SUDOPER BLANCO LEGRA XL 6 S antracit bez prib. bez dalj.", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Sudoperi"},
-    {"Naziv": "[RO20524254] SUDOPER BLANCO DINAS XL 6 S, bez dalj. upr.", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Sudoperi"},
-    {"Naziv": "[RO20525110] Sudoper Blanco LEMIS XL S-IF compact sa dalj.", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Sudoperi"},
-    {"Naziv": "[RO20525198] PIPA BLANCO FONTAS-S II KROM VT", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Pipe"},
-    {"Naziv": "[RO20526019] BLANCO ZIA XL 6 S Compact SILGRANIT PuraDur CRNA, bez dalj. upr", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Sudoperi"},
-    {"Naziv": "[RO20526152] PIPA BLANCO DARAS SILGRANIT-LOOK CRNA VT", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Pipe"},
-    {"Naziv": "[RO20527692] BLANCO ANDANO kadica (417x197mm), INOX", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Sudoperi"},
-    {"Naziv": "[RO20530571] PIPA ALVEUS AM20-PS G55 VT", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Pipe"},
-    {"Naziv": "[RO20530955] AMICA ugradbena mikrovalna pećnica Integra AMMB20E1GI", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Tehnika"},
-    {"Naziv": "[RO20530970] AMICA ugradbena mikrovalna pećnica AMMB25E2GI", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Tehnika"},
-    {"Naziv": "[RO20540053] SUDOPER ALVEUS CADIT 40 Terra G22", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Sudoperi"},
-    {"Naziv": "[RO20540060] Sudoper ALVEUS Cadit 20, carbon A91", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Sudoperi"},
-    {"Naziv": "[RO20551270] KOLJENO FABER CRV 90", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Tehnika"},
-    {"Naziv": "[RO20551635] FABER NEPOVRATNI VENTIL VR2 120", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Tehnika"},
-    {"Naziv": "[RO20555031] Napa Faber Strip Smart PB X A60", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Tehnika"},
-    {"Naziv": "[RO20555055] Napa Faber Value SL X A60, inox", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Tehnika"},
-    {"Naziv": "[RO20557020] NAPA FABER Synthesis HiP PB X A90", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Tehnika"},
-    {"Naziv": "[RO20802004] FRANKE SUDOPER NEPTUNE NEX 621", "Predviđena količina": 1.0, "JM": "set", "Kategorija": "Sudoperi"},
-    {"Naziv": "[RO20802356] SUDOPER FRANKE LOGICA LINE LLX 611", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Sudoperi"},
-    {"Naziv": "[RO20802572] SUDOPER FRANKE ROTONDO RON 610-41", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Sudoperi"},
-    {"Naziv": "[RO20802625] PIPA FRANKE SINTA DOCCIA krom/grafit", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Pipe"},
-    {"Naziv": "[RO20802682] PIPA FRANKE-D SINTA krom/sahara", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Pipe"},
-    {"Naziv": "[RO20802734] SUDOPER FRANKE SKX651", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Sudoperi"},
-    {"Naziv": "[RO20802777] FRANKE inox krema 250 gr.", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Ostalo"},
-    {"Naziv": "[RO20802783] PIPA FRANKE NOVARA PLUS krom", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Pipe"},
-    {"Naziv": "[RO20820368] SUDOPER ELLECI EASY 300 NERO", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Sudoperi"},
-    {"Naziv": "[RO20820618] ELLECI potiskivač otpada", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Tehnika"},
-    {"Naziv": "[RO20820680] Sudoper SHR Lines 30", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Sudoperi"},
-    {"Naziv": "[RO20820691] ELLECI koljeno izljeva", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Tehnika"},
-    {"Naziv": "[RO20852044] NAPA FABER Inka Smart HCS X A52", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Tehnika"},
-    {"Naziv": "[RO20852049] Napa Faber Inka Smart C LG A52", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Tehnika"},
-    {"Naziv": "[RO20853178] Set Cadit 40 G91 + Delos-P G91", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Sudoperi"},
-    {"Naziv": "[RO20853183] PIPA ALVEUS armatura ROXA CHR - G81", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Pipe"},
-    {"Naziv": "[RO20853257] DOZATOR DETERDŽENTA CALLAS 0,32L CHR", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Ostalo"},
-    {"Naziv": "[RO20857125] PIPA ALVEUS ZINA CHR-G05M", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Pipe"},
-    {"Naziv": "[RO20864050] LIEBHERR ugradbeni hladnjak ICBb 5152 - Prime Line", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Tehnika"},
-    {"Naziv": "[RO20873231] BOSCH Kombinirana ploča za kuhanje, nehrđajući čelik", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Tehnika"},
-    {"Naziv": "[RO20889113] Ugradbeni Hladnjak SMEG C8175TNE, No Frost", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Tehnika"},
-    {"Naziv": "[RO20889116] Ugradbena ploča SMEG SI4642D Universal, indukcija", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Tehnika"},
-    {"Naziv": "[RO20889117] Ugradbena perilica posuda SMEG STL362DQ", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Tehnika"},
-    {"Naziv": "[RO20889378] FABER UGLJENI FILTER Ugljeni filter VRT, TSPG, TGL, TSP", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Tehnika"},
-    {"Naziv": "[RO21728422] PIPA FRANKE LINA-XL GRAFIT", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Pipe"},
-    {"Naziv": "[RO21728457] FRANKE SUDOPER SMART SRX 620-86", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Sudoperi"},
-    {"Naziv": "[RO21758697] Sudoper FRANKE Maris Quiet MQX 110-82, inox", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Sudoperi"},
-    {"Naziv": "[RO22853297] PIPA ALVEUS Swan Monarch, copper", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Pipe"},
-    {"Naziv": "[RO22853371] ALVEUS SET Sudoper Cadit 20 A90 black edition + Pipa Jana black matte + Gratis AllRound black", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Sudoperi"},
-    {"Naziv": "[RO22853372] ALVEUS SET Sudoper Atrox 30 A90 black edition + Pipa Jana black matte + Gratis AllRound black", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Sudoperi"},
-    {"Naziv": "[RO22853378] Sudoper ALVEUS Cadit 100 A91 Carbon", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Sudoperi"},
-    {"Naziv": "[RO22853385] Sudoper ALVEUS Cadit 40 A90 BLACK EDITION", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Sudoperi"},
-    {"Naziv": "[RO22853396] Sudoper ALVEUS Elegant 110, inox", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Sudoperi"},
-    {"Naziv": "[RO22853401] Sudoper ALVEUS Pure-G 70 D A20 Ivory", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Sudoperi"},
-    {"Naziv": "[RO25512835] Napa FABER Flexa NG BK A60, crna", "Predviđena količina": 1.0, "JM": "kom", "Kategorija": "Tehnika"},
-    {"Naziv": "[RO20551663] Faber F23 - Ugljeni filter Inka Smart C-HC-HCS", "Predviđena količina": 2.0, "JM": "kom", "Kategorija": "Tehnika"},
-    {"Naziv": "[RO20820029] SUDOPER AQUASANITA-HELIKA ECO 2 crni", "Predviđena količina": 2.0, "JM": "kom", "Kategorija": "Sudoperi"},
-    {"Naziv": "[RO20551302] FABER UGLJENI FILTER F8 BELLE, COCKTAIL, MAXIMA, SYNTHESIS, CUBIA, DAISY, LITHOS (par)", "Predviđena količina": 3.0, "JM": "kom", "Kategorija": "Tehnika"},
-    {"Naziv": "[RO20551548] Faber ugljeni filter F3 Flexa Glass lux- Hip, Value, Intra (par)", "Predviđena količina": 5.0, "JM": "kom", "Kategorija": "Tehnika"},
-    {"Naziv": "[RO22853368] ALVEUS kruna za bušenje sudopera 35mm", "Predviđena količina": 17.0, "JM": "kom", "Kategorija": "Ostalo"}
-]
-
-@st.cache_data(ttl=1)
 def load_data():
-    if os.path.exists(LAGER_FILE):
-        try:
-            df_lager = pd.read_csv(LAGER_FILE)
-            df_lager.columns = df_lager.columns.str.strip()
-            if df_lager.empty:
-                df_lager = pd.DataFrame(POZNATI_ARTIKLI)
-        except:
-            df_lager = pd.DataFrame(POZNATI_ARTIKLI)
+    # Dohvat lagera iz Supabase
+    response_lager = supabase.table("lager").select("*").execute()
+    df_lager = pd.DataFrame(response_lager.data)
+    
+    if not df_lager.empty:
+        # Preimenovanje stupaca da odgovaraju aplikaciji ako je potrebno
+        if "predvidena_kolicina" in df_lager.columns:
+            df_lager = df_lager.rename(columns={
+                "naziv": "Naziv",
+                "predvidena_kolicina": "Predviđena količina",
+                "jm": "JM",
+                "kategorija": "Kategorija"
+            })
     else:
-        df_lager = pd.DataFrame(POZNATI_ARTIKLI)
-        df_lager.to_csv(LAGER_FILE, index=False)
-        
-    if os.path.exists(ARHIVA_FILE):
-        try:
-            df_arhiva = pd.read_csv(ARHIVA_FILE)
-            df_arhiva.columns = df_arhiva.columns.str.strip()
-        except:
-            df_arhiva = pd.DataFrame(columns=["Datum", "naziv", "količina", "JM", "Broj Ponude"])
+        df_lager = pd.DataFrame(columns=["Naziv", "Predviđena količina", "JM", "Kategorija"])
+
+    # Dohvat arhive iz Supabase
+    response_arhiva = supabase.table("arhiva_prodaje").select("*").execute()
+    df_arhiva = pd.DataFrame(response_arhiva.data)
+    
+    if not df_arhiva.empty:
+        df_arhiva = df_arhiva.rename(columns={
+            "datum": "Datum",
+            "naziv": "naziv",
+            "kolicina": "količina",
+            "jm": "JM",
+            "broj_ponude": "Broj Ponude"
+        })
+        # Maknuti suvišni ID stupac iz prikaza ako postoji
+        if "id" in df_arhiva.columns:
+            df_arhiva = df_arhiva.drop(columns=["id"])
     else:
         df_arhiva = pd.DataFrame(columns=["Datum", "naziv", "količina", "JM", "Broj Ponude"])
         
     return df_lager, df_arhiva
-
-def save_data(df_lager, df_arhiva):
-    if "Prodaj" in df_lager.columns:
-        df_lager = df_lager.drop(columns=["Prodaj"])
-    df_lager.to_csv(LAGER_FILE, index=False)
-    df_arhiva.to_csv(ARHIVA_FILE, index=False)
 
 def posalji_email_obavijest(naziv_artikla, kolicina, jm, broj_ponude):
     if not SMTP_USER or not SMTP_PASS:
@@ -165,8 +105,12 @@ with tab_pregled:
     search_query = st.text_input("🔍 Pretraži po nazivu ili šifri:", "", key="search_pregled")
     
     filtered_df = df_lager.copy()
+    # Ukloni ID iz prikaza ako postoji
+    if "id" in filtered_df.columns:
+        filtered_df = filtered_df.drop(columns=["id"])
+        
     if search_query and not filtered_df.empty:
-        naziv_col = filtered_df.columns[0]
+        naziv_col = "Naziv" if "Naziv" in filtered_df.columns else filtered_df.columns[0]
         filtered_df = filtered_df[
             filtered_df[naziv_col].astype(str).str.contains(search_query, case=False, na=False)
         ]
@@ -186,15 +130,13 @@ with tab_pregled:
         st.markdown("---")
         st.subheader("🛒 Dovršetak prodaje za odabrani artikal")
         
-        cols = df_lager.columns.tolist()
-        naziv_c = cols[0]
-        kolicina_c = cols[1] if len(cols) > 1 else cols[0]
-        jm_c = cols[2] if len(cols) > 2 else cols[0]
+        puni_naziv = odabrani_redci.iloc[0]["Naziv"]
+        originalni_red = df_lager[df_lager["Naziv"].astype(str) == str(puni_naziv)].iloc[0]
         
-        puni_naziv = odabrani_redci.iloc[0][naziv_c]
-        originalni_red = df_lager[df_lager[naziv_c].astype(str) == str(puni_naziv)].iloc[0]
-        trenutna_kolicina = float(originalni_red[kolicina_c])
-        jm_artikla = str(originalni_red[jm_c])
+        # Dohvati ID retka u bazi za ažuriranje/brisanje
+        artikal_id = originalni_red["id"] if "id" in originalni_red else None
+        trenutna_kolicina = float(originalni_red["Predviđena količina"])
+        jm_artikla = str(originalni_red["JM"])
         
         st.info(f"Odabran artikal: **{puni_naziv}** (Dostupno: {trenutna_kolicina} {jm_artikla})")
         
@@ -208,23 +150,26 @@ with tab_pregled:
             if not broj_ponude.strip():
                 st.error("Greška: Unesi broj ponude prije knjiženja!")
             else:
+                # Ažuriranje baze (Supabase)
                 if kolicina_za_maknuti >= trenutna_kolicina:
-                    updated_lager = df_lager[df_lager[naziv_c].astype(str) != str(puni_naziv)]
+                    if artikal_id:
+                        supabase.table("lager").delete().eq("id", artikal_id).execute()
                 else:
-                    df_lager.loc[df_lager[naziv_c].astype(str) == str(puni_naziv), kolicina_c] = trenutna_kolicina - kolicina_za_maknuti
-                    updated_lager = df_lager
+                    nova_kol = trenutna_kolicina - kolicina_za_maknuti
+                    if artikal_id:
+                        supabase.table("lager").update({"predvidena_kolicina": nova_kol}).eq("id", artikal_id).execute()
                 
                 vrijeme_sada = datetime.now().strftime("%Y-%m-%d %H:%M")
-                nova_stavka_arhiva = pd.DataFrame({
-                    "Datum": [vrijeme_sada],
-                    "naziv": [puni_naziv],
-                    "količina": [kolicina_za_maknuti],
-                    "JM": [jm_artikla],
-                    "Broj Ponude": [broj_ponude]
-                })
-                updated_arhiva = pd.concat([df_arhiva, nova_stavka_arhiva], ignore_index=True)
                 
-                save_data(updated_lager, updated_arhiva)
+                # Zapis u arhivu u Supabase
+                supabase.table("arhiva_prodaje").insert({
+                    "datum": vrijeme_sada,
+                    "naziv": puni_naziv,
+                    "kolicina": kolicina_za_maknuti,
+                    "jm": jm_artikla,
+                    "broj_ponude": broj_ponude
+                }).execute()
+                
                 posalji_email_obavijest(puni_naziv, kolicina_za_maknuti, jm_artikla, broj_ponude)
                 
                 st.cache_data.clear()
@@ -243,17 +188,16 @@ with tab_dodaj:
             if not novi_naziv.strip():
                 st.error("Upiši naziv artikla!")
             else:
-                new_row = pd.DataFrame({
-                    "Naziv": [novi_naziv],
-                    "Predviđena količina": [nova_kolicina],
-                    "JM": [nova_jm],
-                    "Kategorija": [nova_kategorija]
-                })
-                updated_lager = pd.concat([df_lager, new_row], ignore_index=True)
+                # Spremanje novog artikla u Supabase
+                supabase.table("lager").insert({
+                    "naziv": novi_naziv,
+                    "predvidena_kolicina": nova_kolicina,
+                    "jm": nova_jm,
+                    "kategorija": nova_kategorija
+                }).execute()
                 
-                save_data(updated_lager, df_arhiva)
                 st.cache_data.clear()
-                st.success("Uspješno dodano na lager!")
+                st.success("Uspješno dodano na lager u bazu!")
                 st.rerun()
 
 with tab_arhiva:
