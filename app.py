@@ -8,10 +8,20 @@ from email.mime.multipart import MIMEMultipart
 
 st.set_page_config(page_title="Upravljanje Lagerom - Elgrad Pula", layout="wide")
 
-# Spajanje na Supabase koristeći Secrets
-SUPABASE_URL = st.secrets["supabase"]["url"]
-SUPABASE_KEY = st.secrets["supabase"]["key"]
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# Sigurno dohvaćanje Supabase postavki iz Secrets-a
+if "supabase" in st.secrets and "url" in st.secrets["supabase"] and "key" in st.secrets["supabase"]:
+    SUPABASE_URL = st.secrets["supabase"]["url"]
+    SUPABASE_KEY = st.secrets["supabase"]["key"]
+else:
+    st.error("❌ Supabase podaci nisu pronađeni u Streamlit Secrets! Provjerite postavke u Settings -> Secrets.")
+    st.stop()
+
+# Inicijalizacija Supabase klijenta
+try:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+except Exception as e:
+    st.error(f"❌ Pogreška pri inicijalizaciji Supabase klijenta: {e}")
+    st.stop()
 
 # SMTP postavke iz Secrets
 SMTP_SERVER = st.secrets["smtp"]["server"] if "smtp" in st.secrets else "smtp.gmail.com"
@@ -21,12 +31,15 @@ SMTP_PASS = st.secrets["smtp"]["password"] if "smtp" in st.secrets else ""
 EMAIL_PRIMATELJ = st.secrets["smtp"]["recipient"] if "smtp" in st.secrets else "zeljko.marzluft@elgrad.hr"
 
 def load_data():
-    # Dohvat lagera iz Supabase
-    response_lager = supabase.table("lager").select("*").execute()
-    df_lager = pd.DataFrame(response_lager.data)
-    
+    try:
+        # Dohvat lagera iz Supabase
+        response_lager = supabase.table("lager").select("*").execute()
+        df_lager = pd.DataFrame(response_lager.data)
+    except Exception as e:
+        st.error(f"❌ Greška kod čitanja tablice 'lager' iz baze: {e}")
+        df_lager = pd.DataFrame(columns=["id", "naziv", "predvidena_kolicina", "jm", "kategorija"])
+
     if not df_lager.empty:
-        # Preimenovanje stupaca da odgovaraju aplikaciji ako je potrebno
         if "predvidena_kolicina" in df_lager.columns:
             df_lager = df_lager.rename(columns={
                 "naziv": "Naziv",
@@ -37,9 +50,12 @@ def load_data():
     else:
         df_lager = pd.DataFrame(columns=["Naziv", "Predviđena količina", "JM", "Kategorija"])
 
-    # Dohvat arhive iz Supabase
-    response_arhiva = supabase.table("arhiva_prodaje").select("*").execute()
-    df_arhiva = pd.DataFrame(response_arhiva.data)
+    try:
+        # Dohvat arhive iz Supabase
+        response_arhiva = supabase.table("arhiva_prodaje").select("*").execute()
+        df_arhiva = pd.DataFrame(response_arhiva.data)
+    except Exception as e:
+        df_arhiva = pd.DataFrame(columns=["datum", "naziv", "kolicina", "jm", "broj_ponude"])
     
     if not df_arhiva.empty:
         df_arhiva = df_arhiva.rename(columns={
@@ -49,7 +65,6 @@ def load_data():
             "jm": "JM",
             "broj_ponude": "Broj Ponude"
         })
-        # Maknuti suvišni ID stupac iz prikaza ako postoji
         if "id" in df_arhiva.columns:
             df_arhiva = df_arhiva.drop(columns=["id"])
     else:
@@ -105,7 +120,6 @@ with tab_pregled:
     search_query = st.text_input("🔍 Pretraži po nazivu ili šifri:", "", key="search_pregled")
     
     filtered_df = df_lager.copy()
-    # Ukloni ID iz prikaza ako postoji
     if "id" in filtered_df.columns:
         filtered_df = filtered_df.drop(columns=["id"])
         
@@ -133,7 +147,6 @@ with tab_pregled:
         puni_naziv = odabrani_redci.iloc[0]["Naziv"]
         originalni_red = df_lager[df_lager["Naziv"].astype(str) == str(puni_naziv)].iloc[0]
         
-        # Dohvati ID retka u bazi za ažuriranje/brisanje
         artikal_id = originalni_red["id"] if "id" in originalni_red else None
         trenutna_kolicina = float(originalni_red["Predviđena količina"])
         jm_artikla = str(originalni_red["JM"])
@@ -150,7 +163,6 @@ with tab_pregled:
             if not broj_ponude.strip():
                 st.error("Greška: Unesi broj ponude prije knjiženja!")
             else:
-                # Ažuriranje baze (Supabase)
                 if kolicina_za_maknuti >= trenutna_kolicina:
                     if artikal_id:
                         supabase.table("lager").delete().eq("id", artikal_id).execute()
@@ -161,7 +173,6 @@ with tab_pregled:
                 
                 vrijeme_sada = datetime.now().strftime("%Y-%m-%d %H:%M")
                 
-                # Zapis u arhivu u Supabase
                 supabase.table("arhiva_prodaje").insert({
                     "datum": vrijeme_sada,
                     "naziv": puni_naziv,
@@ -181,14 +192,13 @@ with tab_dodaj:
     with st.form("form_dodaj"):
         novi_naziv = st.text_input("Naziv (šifra i naziv artikla)")
         nova_kategorija = st.selectbox("Kategorija", ["Tehnika", "Sudoperi", "Pipe", "Zidne obloge", "Ostalo"])
-        nova_jm = st.text_input("JM (Jedinična mjera)", value="kom")
+        nova_jm = st.text_input("Jedinična mjera (JM)", value="kom")
         nova_kolicina = st.number_input("Predviđena količina", min_value=0.0, value=1.0, step=1.0)
         
         if st.form_submit_button("Spremi u lager"):
             if not novi_naziv.strip():
                 st.error("Upiši naziv artikla!")
             else:
-                # Spremanje novog artikla u Supabase
                 supabase.table("lager").insert({
                     "naziv": novi_naziv,
                     "predvidena_kolicina": nova_kolicina,
